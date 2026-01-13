@@ -317,6 +317,244 @@ func addToZip(zipW *zip.Writer, filename string, content []byte) error {
 	return nil
 }
 
+// ProcessLogDumpToZip processes extracted blobs and creates a ZIP archive at the specified output path.
+// This function handles the full processing pipeline: unpacking blobs, parsing log dumps, writing
+// Kubernetes resources as YAML files, writing pod logs, and creating the final ZIP archive.
+//
+// Parameters:
+//   - blobs: A slice of base64-encoded gzip-compressed blob strings to process
+//   - outputPath: The file path where the resulting ZIP archive will be written
+//
+// Returns:
+//   - error: Any error encountered during processing or ZIP creation
+func ProcessLogDumpToZip(blobs []string, outputPath string) error {
+	// Create a temporary directory for extraction
+	tempDir, err := os.MkdirTemp("", "lumberjack_*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	var rawLogs []string
+
+	for i, blob := range blobs {
+		raw, err := unpack(blob)
+		if err != nil {
+			continue
+		}
+
+		logDump, err := parseLogDump(raw)
+		if err != nil {
+			rawLogs = append(rawLogs, string(raw))
+			continue
+		}
+
+		// Create directory structure for this blob
+		blobDir := filepath.Join(tempDir, fmt.Sprintf("blob_%d", i+1))
+		os.MkdirAll(blobDir, 0755)
+
+		// Write Kubernetes objects as YAML files
+		if logDump.CapiCluster != nil {
+			if err := writeYAML(blobDir, "capi_cluster.yaml", logDump.CapiCluster); err != nil {
+				return fmt.Errorf("failed to write capiCluster for blob %d: %w", i+1, err)
+			}
+		}
+
+		if logDump.Cluster != nil {
+			if err := writeYAML(blobDir, "cluster.yaml", logDump.Cluster); err != nil {
+				return fmt.Errorf("failed to write cluster for blob %d: %w", i+1, err)
+			}
+		}
+
+		if logDump.InfraCluster != nil {
+			if err := writeYAML(blobDir, "infra_cluster.yaml", logDump.InfraCluster); err != nil {
+				return fmt.Errorf("failed to write infraCluster for blob %d: %w", i+1, err)
+			}
+		}
+
+		if logDump.RKEControlPlane != nil {
+			if err := writeYAML(blobDir, "rke_controlplane.yaml", logDump.RKEControlPlane); err != nil {
+				return fmt.Errorf("failed to write RKEControlPlane for blob %d: %w", i+1, err)
+			}
+		}
+
+		if logDump.MgmtCluster != nil {
+			if err := writeYAML(blobDir, "mgmt_cluster.yaml", logDump.MgmtCluster); err != nil {
+				return fmt.Errorf("failed to write mgmtCluster for blob %d: %w", i+1, err)
+			}
+		}
+
+		if logDump.Machines != nil && len(logDump.Machines.Items) > 0 {
+			machinesDir := filepath.Join(blobDir, "machines")
+			os.MkdirAll(machinesDir, 0755)
+			for _, machine := range logDump.Machines.Items {
+				name := fmt.Sprintf("machine_%s.yaml", machine.Name)
+				if err := writeYAML(machinesDir, name, machine); err != nil {
+					return fmt.Errorf("failed to write machine %s for blob %d: %w", machine.Name, i+1, err)
+				}
+			}
+		}
+
+		if logDump.MachineSets != nil && len(logDump.MachineSets.Items) > 0 {
+			machineSetsDir := filepath.Join(blobDir, "machine_sets")
+			os.MkdirAll(machineSetsDir, 0755)
+			for _, machineSet := range logDump.MachineSets.Items {
+				name := fmt.Sprintf("machineset_%s.yaml", machineSet.Name)
+				if err := writeYAML(machineSetsDir, name, machineSet); err != nil {
+					return fmt.Errorf("failed to write machineSet %s for blob %d: %w", machineSet.Name, i+1, err)
+				}
+			}
+		}
+
+		if logDump.MachineDeployments != nil && len(logDump.MachineDeployments.Items) > 0 {
+			machineDeploymentsDir := filepath.Join(blobDir, "machine_deployments")
+			os.MkdirAll(machineDeploymentsDir, 0755)
+			for _, machineDeployment := range logDump.MachineDeployments.Items {
+				name := fmt.Sprintf("machinedeployment_%s.yaml", machineDeployment.Name)
+				if err := writeYAML(machineDeploymentsDir, name, machineDeployment); err != nil {
+					return fmt.Errorf("failed to write machineDeployment %s for blob %d: %w", machineDeployment.Name, i+1, err)
+				}
+			}
+		}
+
+		if len(logDump.InfraMachines) > 0 {
+			infraMachinesDir := filepath.Join(blobDir, "infra_machines")
+			os.MkdirAll(infraMachinesDir, 0755)
+			for idx, infraMachine := range logDump.InfraMachines {
+				name := "unknown"
+				if nameVal, ok := infraMachine["name"].(string); ok && nameVal != "" {
+					name = nameVal
+				}
+				filename := fmt.Sprintf("infra_machine_%s.yaml", name)
+				if err := writeYAML(infraMachinesDir, filename, infraMachine); err != nil {
+					return fmt.Errorf("failed to write infra machine %d for blob %d: %w", idx+1, i+1, err)
+				}
+			}
+		}
+
+		if len(logDump.RkeBootstraps) > 0 {
+			rkeBootstrapsDir := filepath.Join(blobDir, "rke_bootstraps")
+			os.MkdirAll(rkeBootstrapsDir, 0755)
+			for _, bootstrapList := range logDump.RkeBootstraps {
+				if bootstrapList == nil || len(bootstrapList.Items) == 0 {
+					continue
+				}
+				for _, bootstrap := range bootstrapList.Items {
+					name := fmt.Sprintf("rke_bootstrap_%s.yaml", bootstrap.Name)
+					if err := writeYAML(rkeBootstrapsDir, name, bootstrap); err != nil {
+						return fmt.Errorf("failed to write RKEBootstrap %s for blob %d: %w", bootstrap.Name, i+1, err)
+					}
+				}
+			}
+		}
+
+		if logDump.Snapshots != nil && len(logDump.Snapshots.Items) > 0 {
+			snapshotsDir := filepath.Join(blobDir, "etcd_snapshots")
+			os.MkdirAll(snapshotsDir, 0755)
+			for _, snapshot := range logDump.Snapshots.Items {
+				name := fmt.Sprintf("snapshot_%s.yaml", snapshot.Name)
+				if err := writeYAML(snapshotsDir, name, snapshot); err != nil {
+					return fmt.Errorf("failed to write snapshot %s for blob %d: %w", snapshot.Name, i+1, err)
+				}
+			}
+		}
+
+		// Write pod logs
+		if len(logDump.PodLogs) > 0 {
+			podLogsDir := filepath.Join(blobDir, "pod_logs")
+			os.MkdirAll(podLogsDir, 0755)
+
+			for nodeName, nodeLogs := range logDump.PodLogs {
+				nodeDir := filepath.Join(podLogsDir, sanitizeFilename(nodeName))
+				os.MkdirAll(nodeDir, 0755)
+
+				for logKey, encodedContent := range nodeLogs {
+					if encodedContent == "" {
+						continue
+					}
+
+					content, err := decodePodLogContent(encodedContent)
+					if err != nil {
+						return fmt.Errorf("failed to decode pod log %s/%s for blob %d: %w", nodeName, logKey, i+1, err)
+					}
+
+					if content != "" {
+						logFilename := fmt.Sprintf("%s.txt", logKey)
+						if err := writeText(nodeDir, logFilename, content); err != nil {
+							return fmt.Errorf("failed to write pod log %s/%s for blob %d: %w", nodeName, logKey, i+1, err)
+						}
+					}
+				}
+			}
+		}
+
+		// Write the raw JSON dump
+		if err := writeText(blobDir, "full_decoded_raw_dump.json", string(raw)); err != nil {
+			return fmt.Errorf("failed to write raw dump for blob %d: %w", i+1, err)
+		}
+	}
+
+	// Write rancher logs (non-JSON blobs)
+	if len(rawLogs) > 0 {
+		rancherLogsDir := filepath.Join(tempDir, "rancher_logs")
+		os.MkdirAll(rancherLogsDir, 0755)
+
+		for i, log := range rawLogs {
+			logFilename := fmt.Sprintf("rancher_log_%d.txt", i+1)
+			if err := writeText(rancherLogsDir, logFilename, log); err != nil {
+				return fmt.Errorf("failed to write rancher log %d: %w", i+1, err)
+			}
+		}
+	}
+
+	// Create ZIP file
+	zipFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer zipFile.Close()
+
+	zipW := zip.NewWriter(zipFile)
+	defer zipW.Close()
+
+	// Walk through the temp directory and add all files to ZIP
+	err = filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Get relative path for ZIP entry
+		relPath, err := filepath.Rel(tempDir, path)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path: %w", err)
+		}
+
+		// Read file content
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", path, err)
+		}
+
+		// Add to ZIP
+		if err := addToZip(zipW, relPath, content); err != nil {
+			return fmt.Errorf("failed to add %s to zip: %w", relPath, err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("error creating ZIP file: %w", err)
+	}
+
+	return nil
+}
+
 // main is the entry point for the lumberjack tool. It processes Rancher log
 // dumps by extracting base64-encoded gzip-compressed blobs, parsing structured
 // log dump data, and organizing the extracted content into a ZIP archive.
@@ -362,237 +600,8 @@ func main() {
 	blobs := extractBlobs(bodyStr)
 	fmt.Printf("[%d] base64/gzipped blobs found!\n", len(blobs))
 
-	// Create a temporary directory for extraction
-	tempDir, err := os.MkdirTemp("", "lumberjack_*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating temp dir: %v\n", err)
-		os.Exit(1)
-	}
-	defer os.RemoveAll(tempDir)
-
-	var rawLogs []string
-
-	for i, blob := range blobs {
-		fmt.Printf("\nParsing blob %d\n", i+1)
-
-		raw, err := unpack(blob)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error unpacking blob %d: %v\n", i+1, err)
-			continue
-		}
-
-		logDump, err := parseLogDump(raw)
-		if err != nil {
-			fmt.Printf("Blob %d is not a structured log dump (rancher logs), saving as raw log\n", i+1)
-			rawLogs = append(rawLogs, string(raw))
-			continue
-		}
-
-		// Create directory structure for this blob
-		blobDir := filepath.Join(tempDir, fmt.Sprintf("blob_%d", i+1))
-		os.MkdirAll(blobDir, 0755)
-
-		// Write Kubernetes objects as YAML files
-		if logDump.CapiCluster != nil {
-			if err := writeYAML(blobDir, "capi_cluster.yaml", logDump.CapiCluster); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing capiCluster: %v\n", err)
-			}
-		}
-
-		if logDump.Cluster != nil {
-			if err := writeYAML(blobDir, "cluster.yaml", logDump.Cluster); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing cluster: %v\n", err)
-			}
-		}
-
-		if logDump.InfraCluster != nil {
-			if err := writeYAML(blobDir, "infra_cluster.yaml", logDump.InfraCluster); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing infraCluster: %v\n", err)
-			}
-		}
-
-		if logDump.RKEControlPlane != nil {
-			if err := writeYAML(blobDir, "rke_controlplane.yaml", logDump.RKEControlPlane); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing RKEControlPlane: %v\n", err)
-			}
-		}
-
-		if logDump.MgmtCluster != nil {
-			if err := writeYAML(blobDir, "mgmt_cluster.yaml", logDump.MgmtCluster); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing mgmtCluster: %v\n", err)
-			}
-		}
-
-		if logDump.Machines != nil && len(logDump.Machines.Items) > 0 {
-			machinesDir := filepath.Join(blobDir, "machines")
-			os.MkdirAll(machinesDir, 0755)
-			for _, machine := range logDump.Machines.Items {
-				name := fmt.Sprintf("machine_%s.yaml", machine.Name)
-				if err := writeYAML(machinesDir, name, machine); err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing machine %s: %v\n", machine.Name, err)
-				}
-			}
-		}
-
-		if logDump.MachineSets != nil && len(logDump.MachineSets.Items) > 0 {
-			machineSetsDir := filepath.Join(blobDir, "machine_sets")
-			os.MkdirAll(machineSetsDir, 0755)
-			for _, machineSet := range logDump.MachineSets.Items {
-				name := fmt.Sprintf("machineset_%s.yaml", machineSet.Name)
-				if err := writeYAML(machineSetsDir, name, machineSet); err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing machineSet %s: %v\n", machineSet.Name, err)
-				}
-			}
-		}
-
-		if logDump.MachineDeployments != nil && len(logDump.MachineDeployments.Items) > 0 {
-			machineDeploymentsDir := filepath.Join(blobDir, "machine_deployments")
-			os.MkdirAll(machineDeploymentsDir, 0755)
-			for _, machineDeployment := range logDump.MachineDeployments.Items {
-				name := fmt.Sprintf("machinedeployment_%s.yaml", machineDeployment.Name)
-				if err := writeYAML(machineDeploymentsDir, name, machineDeployment); err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing machineDeployment %s: %v\n", machineDeployment.Name, err)
-				}
-			}
-		}
-
-		if len(logDump.InfraMachines) > 0 {
-			infraMachinesDir := filepath.Join(blobDir, "infra_machines")
-			os.MkdirAll(infraMachinesDir, 0755)
-			for idx, infraMachine := range logDump.InfraMachines {
-				name := "unknown"
-				if nameVal, ok := infraMachine["name"].(string); ok && nameVal != "" {
-					name = nameVal
-				}
-				filename := fmt.Sprintf("infra_machine_%s.yaml", name)
-				if err := writeYAML(infraMachinesDir, filename, infraMachine); err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing infra machine %d: %v\n", idx+1, err)
-				}
-			}
-		}
-
-		if len(logDump.RkeBootstraps) > 0 {
-			rkeBootstrapsDir := filepath.Join(blobDir, "rke_bootstraps")
-			os.MkdirAll(rkeBootstrapsDir, 0755)
-			for _, bootstrapList := range logDump.RkeBootstraps {
-				if bootstrapList == nil || len(bootstrapList.Items) == 0 {
-					continue
-				}
-				for _, bootstrap := range bootstrapList.Items {
-					name := fmt.Sprintf("rke_bootstrap_%s.yaml", bootstrap.Name)
-					if err := writeYAML(rkeBootstrapsDir, name, bootstrap); err != nil {
-						fmt.Fprintf(os.Stderr, "Error writing RKEBootstrap %s: %v\n", bootstrap.Name, err)
-					}
-				}
-			}
-		}
-
-		if logDump.Snapshots != nil && len(logDump.Snapshots.Items) > 0 {
-			snapshotsDir := filepath.Join(blobDir, "etcd_snapshots")
-			os.MkdirAll(snapshotsDir, 0755)
-			for _, snapshot := range logDump.Snapshots.Items {
-				name := fmt.Sprintf("snapshot_%s.yaml", snapshot.Name)
-				if err := writeYAML(snapshotsDir, name, snapshot); err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing snapshot %s: %v\n", snapshot.Name, err)
-				}
-			}
-		}
-
-		// Write pod logs
-		if len(logDump.PodLogs) > 0 {
-			podLogsDir := filepath.Join(blobDir, "pod_logs")
-			os.MkdirAll(podLogsDir, 0755)
-
-			for nodeName, nodeLogs := range logDump.PodLogs {
-				nodeDir := filepath.Join(podLogsDir, sanitizeFilename(nodeName))
-				os.MkdirAll(nodeDir, 0755)
-
-				for logKey, encodedContent := range nodeLogs {
-					if encodedContent == "" {
-						continue
-					}
-
-					content, err := decodePodLogContent(encodedContent)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "Error decoding pod log %s/%s: %v\n", nodeName, logKey, err)
-						continue
-					}
-
-					if content != "" {
-						logFilename := fmt.Sprintf("%s.txt", logKey)
-						if err := writeText(nodeDir, logFilename, content); err != nil {
-							fmt.Fprintf(os.Stderr, "Error writing pod log %s/%s: %v\n", nodeName, logKey, err)
-						}
-					}
-				}
-			}
-		}
-
-		// Write the raw JSON dump
-		if err := writeText(blobDir, "full_decoded_raw_dump.json", string(raw)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing raw dump: %v\n", err)
-		}
-
-		fmt.Printf("Successfully parsed blob %d as log dump\n", i+1)
-	}
-
-	// Write rancher logs (non-JSON blobs)
-	if len(rawLogs) > 0 {
-		rancherLogsDir := filepath.Join(tempDir, "rancher_logs")
-		os.MkdirAll(rancherLogsDir, 0755)
-
-		for i, log := range rawLogs {
-			logFilename := fmt.Sprintf("rancher_log_%d.txt", i+1)
-			if err := writeText(rancherLogsDir, logFilename, log); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing rancher log %d: %v\n", i+1, err)
-			}
-		}
-	}
-
-	// Create ZIP file
-	zipFile, err := os.Create(*output)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-		os.Exit(1)
-	}
-	defer zipFile.Close()
-
-	zipW := zip.NewWriter(zipFile)
-	defer zipW.Close()
-
-	// Walk through the temp directory and add all files to ZIP
-	err = filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip directories
-		if info.IsDir() {
-			return nil
-		}
-
-		// Get relative path for ZIP entry
-		relPath, err := filepath.Rel(tempDir, path)
-		if err != nil {
-			return err
-		}
-
-		// Read file content
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("failed to read file %s: %w", path, err)
-		}
-
-		// Add to ZIP
-		if err := addToZip(zipW, relPath, content); err != nil {
-			return fmt.Errorf("failed to add %s to zip: %w", relPath, err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating ZIP file: %v\n", err)
+	if err := ProcessLogDumpToZip(blobs, *output); err != nil {
+		fmt.Fprintf(os.Stderr, "Error processing log dump: %v\n", err)
 		os.Exit(1)
 	}
 
