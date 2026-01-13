@@ -48,7 +48,7 @@ func (s *IntegrationSuite) AfterSuite() {
 
 func (s *IntegrationSuite) SetupTest() {
 	var err error
-	s.tempDir, err = os.MkdirTemp("", "lumberjack_test_*")
+	s.tempDir, err = os.MkdirTemp("", "cowboy_test_*")
 	require.NoError(s.T(), err, "Failed to create temp directory")
 	s.zipPath = filepath.Join(s.tempDir, "output.zip")
 }

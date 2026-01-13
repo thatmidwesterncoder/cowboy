@@ -1,4 +1,4 @@
-module github.com/thatmidwesterncoder/lumberjack
+module github.com/thatmidwesterncoder/cowboy
 
 go 1.25.5
 

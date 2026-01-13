@@ -1,4 +1,4 @@
-// Package lumberjack processes Rancher log dump archives containing Kubernetes
+// Package cowboy processes Rancher log dump archives containing Kubernetes
 // cluster resources, pod logs, and other diagnostic data. It extracts base64-encoded
 // gzip-compressed blobs, parses structured log dump data, and organizes the extracted
 // content into a ZIP archive with a directory structure for easy navigation.
@@ -329,7 +329,7 @@ func addToZip(zipW *zip.Writer, filename string, content []byte) error {
 //   - error: Any error encountered during processing or ZIP creation
 func ProcessLogDumpToZip(blobs []string, outputPath string) error {
 	// Create a temporary directory for extraction
-	tempDir, err := os.MkdirTemp("", "lumberjack_*")
+	tempDir, err := os.MkdirTemp("", "cowboy_*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -555,7 +555,7 @@ func ProcessLogDumpToZip(blobs []string, outputPath string) error {
 	return nil
 }
 
-// main is the entry point for the lumberjack tool. It processes Rancher log
+// main is the entry point for the cowboy tool. It processes Rancher log
 // dumps by extracting base64-encoded gzip-compressed blobs, parsing structured
 // log dump data, and organizing the extracted content into a ZIP archive.
 //
@@ -570,8 +570,8 @@ func ProcessLogDumpToZip(blobs []string, outputPath string) error {
 //
 // Usage:
 //
-//	lumberjack -url "https://example.com/logdump" -output my_logs.zip
-//	cat logdump.txt | lumberjack -output extracted.zip
+//	cowboy -url "https://example.com/logdump" -output my_logs.zip
+//	cat logdump.txt | cowboy -output extracted.zip
 func main() {
 	url := flag.String("url", "", "URL to fetch log dump from")
 	output := flag.String("output", "log_dump.zip", "Output ZIP file path")
