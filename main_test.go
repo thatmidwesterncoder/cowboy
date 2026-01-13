@@ -15,8 +15,35 @@ import (
 
 type IntegrationSuite struct {
 	suite.Suite
-	tempDir string
-	zipPath string
+	tempDir          string
+	zipPath          string
+	decompressedBody []byte
+	blobs            []string
+}
+
+func (s *IntegrationSuite) SetupSuite() {
+	// Read and decompress testdata/test_request_body.txt.gz once
+	testDataPath := filepath.Join("testdata", "test_request_body.txt.gz")
+	require.FileExists(s.T(), testDataPath, "Test data file should exist")
+
+	gzFile, err := os.Open(testDataPath)
+	require.NoError(s.T(), err, "Failed to open test gzip file")
+	defer gzFile.Close()
+
+	// Decompress using gzip.NewReader
+	gzReader, err := gzip.NewReader(gzFile)
+	require.NoError(s.T(), err, "Failed to create gzip reader")
+	defer gzReader.Close()
+
+	decompressedContent, err := io.ReadAll(gzReader)
+	require.NoError(s.T(), err, "Failed to decompress gzip content")
+
+	s.decompressedBody = decompressedContent
+	s.blobs = extractBlobs(string(decompressedContent))
+}
+
+func (s *IntegrationSuite) AfterSuite() {
+	// Clean up any resources if needed
 }
 
 func (s *IntegrationSuite) SetupTest() {
@@ -33,30 +60,13 @@ func (s *IntegrationSuite) TearDownTest() {
 }
 
 func (s *IntegrationSuite) TestDecompressAndProcess() {
-	// Read the test gzip file
-	testDataPath := filepath.Join("testdata", "test_request_body.txt.gz")
-	require.FileExists(s.T(), testDataPath, "Test data file should exist")
-
-	gzFile, err := os.Open(testDataPath)
-	require.NoError(s.T(), err, "Failed to open test gzip file")
-	defer gzFile.Close()
-
-	// Decompress using gzip.NewReader (raw gzip, not base64+gzip unpack)
-	gzReader, err := gzip.NewReader(gzFile)
-	require.NoError(s.T(), err, "Failed to create gzip reader")
-	defer gzReader.Close()
-
-	decompressedContent, err := io.ReadAll(gzReader)
-	require.NoError(s.T(), err, "Failed to decompress gzip content")
-
-	contentStr := string(decompressedContent)
+	contentStr := string(s.decompressedBody)
 
 	// Extract blobs from the decompressed content
-	blobs := extractBlobs(contentStr)
-	s.T().Logf("Found %d blobs in test data", len(blobs))
+	s.T().Logf("Found %d blobs in test data", len(s.blobs))
 
 	// Process each blob
-	for i, blob := range blobs {
+	for i, blob := range s.blobs {
 		// Call unpack() to decode base64+gzip
 		decodedData, err := unpack(blob)
 		require.NoError(s.T(), err, "Failed to unpack blob %d", i+1)
@@ -75,7 +85,7 @@ func (s *IntegrationSuite) TestDecompressAndProcess() {
 	}
 
 	// Generate ZIP output to temp directory
-	err = s.generateZipFromContent(contentStr)
+	err := s.generateZipFromContent(contentStr)
 	require.NoError(s.T(), err, "Failed to generate ZIP output")
 }
 
@@ -85,22 +95,7 @@ func (s *IntegrationSuite) generateZipFromContent(content string) error {
 }
 
 func (s *IntegrationSuite) TestZipFileCreation() {
-	// First, generate the ZIP by running TestDecompressAndProcess logic
-	testDataPath := filepath.Join("testdata", "test_request_body.txt.gz")
-	require.FileExists(s.T(), testDataPath)
-
-	gzFile, err := os.Open(testDataPath)
-	require.NoError(s.T(), err)
-	defer gzFile.Close()
-
-	gzReader, err := gzip.NewReader(gzFile)
-	require.NoError(s.T(), err)
-	defer gzReader.Close()
-
-	decompressedContent, err := io.ReadAll(gzReader)
-	require.NoError(s.T(), err)
-
-	err = s.generateZipFromContent(string(decompressedContent))
+	err := s.generateZipFromContent(string(s.decompressedBody))
 	require.NoError(s.T(), err, "Failed to generate ZIP output")
 
 	// Validate the ZIP file is created successfully at zipPath
@@ -118,22 +113,7 @@ func (s *IntegrationSuite) TestZipFileCreation() {
 }
 
 func (s *IntegrationSuite) TestZipContainsExpectedFiles() {
-	// Generate the ZIP first
-	testDataPath := filepath.Join("testdata", "test_request_body.txt.gz")
-	require.FileExists(s.T(), testDataPath)
-
-	gzFile, err := os.Open(testDataPath)
-	require.NoError(s.T(), err)
-	defer gzFile.Close()
-
-	gzReader, err := gzip.NewReader(gzFile)
-	require.NoError(s.T(), err)
-	defer gzReader.Close()
-
-	decompressedContent, err := io.ReadAll(gzReader)
-	require.NoError(s.T(), err)
-
-	err = s.generateZipFromContent(string(decompressedContent))
+	err := s.generateZipFromContent(string(s.decompressedBody))
 	require.NoError(s.T(), err, "Failed to generate ZIP output")
 
 	// Open the ZIP and check for expected file patterns
@@ -247,22 +227,7 @@ func (s *IntegrationSuite) TestZipContainsExpectedFiles() {
 }
 
 func (s *IntegrationSuite) TestZipFileCount() {
-	// Generate the ZIP first
-	testDataPath := filepath.Join("testdata", "test_request_body.txt.gz")
-	require.FileExists(s.T(), testDataPath)
-
-	gzFile, err := os.Open(testDataPath)
-	require.NoError(s.T(), err)
-	defer gzFile.Close()
-
-	gzReader, err := gzip.NewReader(gzFile)
-	require.NoError(s.T(), err)
-	defer gzReader.Close()
-
-	decompressedContent, err := io.ReadAll(gzReader)
-	require.NoError(s.T(), err)
-
-	err = s.generateZipFromContent(string(decompressedContent))
+	err := s.generateZipFromContent(string(s.decompressedBody))
 	require.NoError(s.T(), err, "Failed to generate ZIP output")
 
 	// Open the ZIP and count files
