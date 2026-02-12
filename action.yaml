@@ -1,0 +1,118 @@
+---
+name: Cowboy - Process Rancher Log Dumps
+description: Extract and organize Rancher CI log dumps containing Kubernetes cluster diagnostic data into a structured directory
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  log-file-path:
+    description: Path to the Rancher log dump file to process
+    required: true
+  output-file:
+    description: Output directory name (defaults to <input-basename>_dump)
+    required: false
+  upload-artifact:
+    description: Upload the generated directory as a GitHub Actions artifact
+    required: false
+    default: 'true'
+  artifact-retention-days:
+    description: Number of days to retain the artifact (1-90)
+    required: false
+    default: '7'
+  artifact-name:
+    description: Name of the uploaded artifact
+    required: false
+    default: 'cowboy-log-dump'
+
+outputs:
+  output-path:
+    description: Path to the generated directory
+    value: ${{ steps.process.outputs.output-path }}
+  artifact-name:
+    description: Name of the uploaded artifact (if upload-artifact is true)
+    value: ${{ inputs.artifact-name }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      run: |
+        if [[ ! -f "${{ inputs.log-file-path }}" ]]; then
+          echo "::error::Log file not found: ${{ inputs.log-file-path }}"
+          exit 1
+        fi
+        
+        RETENTION_DAYS="${{ inputs.artifact-retention-days }}"
+        if [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]]; then
+          if [[ "$RETENTION_DAYS" -lt 1 || "$RETENTION_DAYS" -gt 90 ]]; then
+            echo "::error::artifact-retention-days must be between 1 and 90, got: $RETENTION_DAYS"
+            exit 1
+          fi
+        else
+          echo "::error::artifact-retention-days must be a number, got: $RETENTION_DAYS"
+          exit 1
+        fi
+
+    - name: Calculate output filename
+      id: filename
+      shell: bash
+      run: |
+        INPUT_FILE="${{ inputs.log-file-path }}"
+        INPUT_BASENAME=$(basename "$INPUT_FILE" | sed 's/\.[^.]*$//')
+
+        if [[ -n "${{ inputs.output-file }}" ]]; then
+          OUTPUT_FILE="${{ inputs.output-file }}"
+        else
+          OUTPUT_FILE="${INPUT_BASENAME}_dump"
+        fi
+
+        echo "output-file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
+        echo "Generated output filename: $OUTPUT_FILE"
+
+    - name: Process log dump
+      id: process
+      shell: bash
+      run: |
+        OUTPUT_FILE="${{ steps.filename.outputs.output-file }}"
+        INPUT_FILE="${{ inputs.log-file-path }}"
+
+        # Convert paths to absolute if they're relative
+        if [[ ! "$INPUT_FILE" = /* ]]; then
+          INPUT_FILE="${{ github.workspace }}/$INPUT_FILE"
+        fi
+        if [[ ! "$OUTPUT_FILE" = /* ]]; then
+          OUTPUT_FILE="${{ github.workspace }}/$OUTPUT_FILE"
+        fi
+
+        # Run cowboy container with the input file (without zipping)
+        docker run --rm \
+          -v "${{ github.workspace }}:/workspace" \
+          -w /workspace \
+          -u $(id -u):$(id -g) \
+          docker.io/rancher/cowboy:latest \
+          -input "$(realpath --relative-to="${{ github.workspace }}" "$INPUT_FILE")" \
+          -output "$(realpath --relative-to="${{ github.workspace }}" "$OUTPUT_FILE")" \
+          -no-zip
+
+        # Verify the output was created
+        if [[ ! -d "$OUTPUT_FILE" ]]; then
+          echo "::error::Failed to generate output directory: $OUTPUT_FILE"
+          exit 1
+        fi
+
+        # Output relative to workspace for consistency
+        RELATIVE_OUTPUT=$(realpath --relative-to="${{ github.workspace }}" "$OUTPUT_FILE")
+        echo "output-path=$RELATIVE_OUTPUT" >> "$GITHUB_OUTPUT"
+        echo "Successfully generated: $RELATIVE_OUTPUT"
+
+    - name: Upload artifact
+      id: upload
+      if: inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.process.outputs.output-path }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: error

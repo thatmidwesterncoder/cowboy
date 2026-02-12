@@ -328,12 +328,39 @@ func addToZip(zipW *zip.Writer, filename string, content []byte) error {
 // Returns:
 //   - error: Any error encountered during processing or ZIP creation
 func ProcessLogDumpToZip(blobs []string, outputPath string) error {
-	// Create a temporary directory for extraction
-	tempDir, err := os.MkdirTemp("", "cowboy_*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
+	return processLogDump(blobs, outputPath, true)
+}
+
+// ProcessLogDumpToDir processes extracted blobs and writes them to a directory.
+// This function handles the full processing pipeline: unpacking blobs, parsing log dumps, writing
+// Kubernetes resources as YAML files, and writing pod logs to the specified directory.
+//
+// Parameters:
+//   - blobs: A slice of base64-encoded gzip-compressed blob strings to process
+//   - outputPath: The directory path where the extracted content will be written
+//
+// Returns:
+//   - error: Any error encountered during processing
+func ProcessLogDumpToDir(blobs []string, outputPath string) error {
+	return processLogDump(blobs, outputPath, false)
+}
+
+func processLogDump(blobs []string, outputPath string, createZip bool) error {
+	// Create output directory
+	var tempDir string
+	var err error
+	if createZip {
+		tempDir, err = os.MkdirTemp("", "cowboy_*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp directory: %w", err)
+		}
+		defer os.RemoveAll(tempDir)
+	} else {
+		tempDir = outputPath
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory: %w", err)
+		}
 	}
-	defer os.RemoveAll(tempDir)
 
 	var rawLogs []string
 
@@ -507,49 +534,51 @@ func ProcessLogDumpToZip(blobs []string, outputPath string) error {
 		}
 	}
 
-	// Create ZIP file
-	zipFile, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
-	}
-	defer zipFile.Close()
-
-	zipW := zip.NewWriter(zipFile)
-	defer zipW.Close()
-
-	// Walk through the temp directory and add all files to ZIP
-	err = filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
+	// Create ZIP file if requested
+	if createZip {
+		zipFile, err := os.Create(outputPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create output file: %w", err)
 		}
+		defer zipFile.Close()
 
-		// Skip directories
-		if info.IsDir() {
+		zipW := zip.NewWriter(zipFile)
+		defer zipW.Close()
+
+		// Walk through the temp directory and add all files to ZIP
+		err = filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip directories
+			if info.IsDir() {
+				return nil
+			}
+
+			// Get relative path for ZIP entry
+			relPath, err := filepath.Rel(tempDir, path)
+			if err != nil {
+				return fmt.Errorf("failed to get relative path: %w", err)
+			}
+
+			// Read file content
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("failed to read file %s: %w", path, err)
+			}
+
+			// Add to ZIP
+			if err := addToZip(zipW, relPath, content); err != nil {
+				return fmt.Errorf("failed to add %s to zip: %w", relPath, err)
+			}
+
 			return nil
-		}
+		})
 
-		// Get relative path for ZIP entry
-		relPath, err := filepath.Rel(tempDir, path)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
+			return fmt.Errorf("error creating ZIP file: %w", err)
 		}
-
-		// Read file content
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("failed to read file %s: %w", path, err)
-		}
-
-		// Add to ZIP
-		if err := addToZip(zipW, relPath, content); err != nil {
-			return fmt.Errorf("failed to add %s to zip: %w", relPath, err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("error creating ZIP file: %w", err)
 	}
 
 	return nil
@@ -574,7 +603,9 @@ func ProcessLogDumpToZip(blobs []string, outputPath string) error {
 //	cat logdump.txt | cowboy -output extracted.zip
 func main() {
 	url := flag.String("url", "", "URL to fetch log dump from")
-	output := flag.String("output", "log_dump.zip", "Output ZIP file path")
+	input := flag.String("input", "log_dump.txt", "Input TXT file path")
+	output := flag.String("output", "log_dump.zip", "Output ZIP file path (or directory path when -no-zip is set)")
+	noZip := flag.Bool("no-zip", false, "Output to directory instead of ZIP file")
 	flag.Parse()
 
 	var body []byte
@@ -585,6 +616,13 @@ func main() {
 		body, err = fetchURL(*url)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error fetching URL: %v\n", err)
+			os.Exit(1)
+		}
+	} else if _, err := os.Stat(*input); err == nil {
+		fmt.Printf("Reading from file: %s\n", *input)
+		body, err = os.ReadFile(*input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
@@ -600,10 +638,17 @@ func main() {
 	blobs := extractBlobs(bodyStr)
 	fmt.Printf("[%d] base64/gzipped blobs found!\n", len(blobs))
 
-	if err := ProcessLogDumpToZip(blobs, *output); err != nil {
-		fmt.Fprintf(os.Stderr, "Error processing log dump: %v\n", err)
-		os.Exit(1)
+	if *noZip {
+		if err := ProcessLogDumpToDir(blobs, *output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing log dump: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nSuccessfully generated directory output: %s\n", *output)
+	} else {
+		if err := ProcessLogDumpToZip(blobs, *output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing log dump: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nSuccessfully generated ZIP output: %s\n", *output)
 	}
-
-	fmt.Printf("\nSuccessfully generated ZIP output: %s\n", *output)
 }

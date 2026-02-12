@@ -243,6 +243,39 @@ func (s *IntegrationSuite) TestZipFileCount() {
 	s.T().Logf("ZIP archive contains %d files", fileCount)
 }
 
+func (s *IntegrationSuite) TestDirOutput() {
+	dirPath := filepath.Join(s.tempDir, "output_dir")
+
+	err := ProcessLogDumpToDir(s.blobs, dirPath)
+	require.NoError(s.T(), err, "ProcessLogDumpToDir failed")
+
+	// Verify directory was created
+	require.DirExists(s.T(), dirPath, "Output directory should exist")
+
+	// Count files in directory
+	fileCount := 0
+	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			fileCount++
+		}
+		return nil
+	})
+	require.NoError(s.T(), err, "Failed to walk directory")
+
+	// Should have same number of files as ZIP
+	require.Greater(s.T(), fileCount, 10, "Expected more than 10 files in directory, got %d", fileCount)
+
+	// Check for key files
+	require.FileExists(s.T(), filepath.Join(dirPath, "blob_1", "capi_cluster.yaml"))
+	require.FileExists(s.T(), filepath.Join(dirPath, "blob_1", "cluster.yaml"))
+	require.FileExists(s.T(), filepath.Join(dirPath, "blob_1", "full_decoded_raw_dump.json"))
+
+	s.T().Logf("Directory contains %d files", fileCount)
+}
+
 func TestIntegration(t *testing.T) {
 	suite.Run(t, new(IntegrationSuite))
 }

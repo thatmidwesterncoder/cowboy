@@ -1,6 +1,14 @@
 # Cowboy
 
+[![Build and Publish Container](https://github.com/rancher/cowboy/actions/workflows/publish-container.yaml/badge.svg)](https://github.com/rancher/cowboy/actions/workflows/publish-container.yaml)
+[![Test Cowboy Action](https://github.com/rancher/cowboy/actions/workflows/test-action.yaml/badge.svg)](https://github.com/rancher/cowboy/actions/workflows/test-action.yaml)
+
 Cowboy is a tool for processing Rancher CI log dump archives collected during cluster failures. It extracts, parses, and organizes diagnostic data from Rancher-managed Kubernetes clusters into a structured ZIP archive.
+
+**Available as:**
+- 🐹 **CLI tool** - Standalone binary for local use
+- 🐳 **Container image** - `ghcr.io/rancher/cowboy:latest`
+- ⚡ **GitHub Action** - Seamless CI/CD integration
 
 ## Overview
 
@@ -11,7 +19,44 @@ When Rancher CI encounters cluster failures, it generates log dumps containing b
 3. **Organizes** - Writes resources as individual YAML files in a navigable directory structure
 4. **Archives** - Bundles everything into a ZIP file for easy distribution and analysis
 
-## Installation
+## Quick Start
+
+### Using as a GitHub Action
+
+Add this to your workflow to automatically process log dumps:
+
+```yaml
+name: Process Log Dump
+on: [push]
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Process Rancher log dump
+        uses: rancher/cowboy@v1
+        with:
+          log-file-path: ./logs/failure-dump.txt
+          output-file: diagnostic-bundle.zip
+```
+
+The processed ZIP file is automatically uploaded as a workflow artifact and can be downloaded from the Actions tab.
+
+### Using the Container Image
+
+```bash
+# Process from stdin
+cat logdump.txt | docker run -i ghcr.io/rancher/cowboy:latest
+
+# Process from file (with volume mount)
+docker run --rm -v $(pwd):/workspace -w /workspace \
+  ghcr.io/rancher/cowboy:latest \
+  -output results.zip < logdump.txt
+```
+
+### Installing the CLI
 
 ```bash
 go build -o cowboy main.go
@@ -23,7 +68,7 @@ Or install globally:
 go install .
 ```
 
-## Usage
+## CLI Usage
 
 ### Input Modes
 
@@ -119,3 +164,70 @@ Cowboy uses the following key dependencies:
 - [Rancher Kubernetes APIs](https://github.com/rancher/rancker/tree/master/pkg/apis) - Management, Provisioning, and RKE API types
 - [Cluster API](https://github.com/kubernetes-sigs/cluster-api) - Infrastructure-agnostic cluster management
 - [siggy YAML](https://github.com/kubernetes-sigs/yaml) - YAML marshaling for Go structs
+
+## GitHub Action Reference
+
+### Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `log-file-path` | Yes | - | Path to the Rancher log dump file to process |
+| `output-file` | No | `<input-basename>_dump.zip` | Output ZIP file name |
+| `upload-artifact` | No | `true` | Upload the generated ZIP as a GitHub Actions artifact |
+| `artifact-retention-days` | No | `30` | Number of days to retain the artifact (1-90) |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `output-path` | Path to the generated ZIP file |
+| `artifact-name` | Name of the uploaded artifact (if upload-artifact is true) |
+
+### Example Workflows
+
+#### Basic usage with default settings
+```yaml
+- uses: rancher/cowboy@v1
+  with:
+    log-file-path: ./logdump.txt
+```
+
+#### Custom output name without artifact upload
+```yaml
+- uses: rancher/cowboy@v1
+  with:
+    log-file-path: ./logs/cluster-failure.txt
+    output-file: cluster-diagnostics.zip
+    upload-artifact: 'false'
+```
+
+#### Process and upload with custom retention
+```yaml
+- uses: rancher/cowboy@v1
+  with:
+    log-file-path: ./dumps/production-failure.txt
+    output-file: prod-diagnostics.zip
+    artifact-retention-days: '90'
+```
+
+#### Using output path in subsequent steps
+```yaml
+- name: Process log dump
+  id: cowboy
+  uses: rancher/cowboy@v1
+  with:
+    log-file-path: ./logdump.txt
+
+- name: Upload to S3
+  run: |
+    aws s3 cp ${{ steps.cowboy.outputs.output-path }} s3://my-bucket/diagnostics/
+```
+
+## Container Image Tags
+
+The container image is available at `ghcr.io/rancher/cowboy` with the following tags:
+
+- `latest` - Latest build from the main branch
+- `v1`, `v1.0`, `v1.0.0` - Semantic version tags
+- `main`, `master` - Branch-based tags
+- `main-abc1234` - Git SHA tags for specific commits
