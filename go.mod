@@ -1,4 +1,4 @@
-module github.com/thatmidwesterncoder/cowboy
+module github.com/rancherlabs/cowboy
 
 go 1.25.5
 

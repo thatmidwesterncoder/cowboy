@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t docker.io/rancher/cowboy:latest .
+        run: docker build -t ghcr.io/rancherlabs/cowboy:latest .
 
       - name: Extract test data
         run: |
@@ -35,7 +35,7 @@ jobs:
             ls -l
             exit 1
           fi
-          ls -lRh test_logs_dump/ 
+          ls -lRh test_logs_dump/
 
       - name: Download and verify artifact
         uses: actions/download-artifact@v4

@@ -91,7 +91,7 @@ runs:
           -v "${{ github.workspace }}:/workspace" \
           -w /workspace \
           -u $(id -u):$(id -g) \
-          docker.io/rancher/cowboy:latest \
+          ghcr.io/rancherlabs/cowboy:latest \
           -input "$(realpath --relative-to="${{ github.workspace }}" "$INPUT_FILE")" \
           -output "$(realpath --relative-to="${{ github.workspace }}" "$OUTPUT_FILE")" \
           -no-zip

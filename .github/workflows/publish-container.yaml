@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: thatmidwesterncoder/cowboy
+  IMAGE_NAME: rancherlabs/cowboy
 
 jobs:
   build-and-push:

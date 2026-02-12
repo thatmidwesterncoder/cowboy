@@ -1,13 +1,13 @@
 # Cowboy
 
-[![Build and Publish Container](https://github.com/rancher/cowboy/actions/workflows/publish-container.yaml/badge.svg)](https://github.com/rancher/cowboy/actions/workflows/publish-container.yaml)
-[![Test Cowboy Action](https://github.com/rancher/cowboy/actions/workflows/test-action.yaml/badge.svg)](https://github.com/rancher/cowboy/actions/workflows/test-action.yaml)
+[![Build and Publish Container](https://github.com/rancherlabs/cowboy/actions/workflows/publish-container.yaml/badge.svg)](https://github.com/rancherlabs/cowboy/actions/workflows/publish-container.yaml)
+[![Test Cowboy Action](https://github.com/rancherlabs/cowboy/actions/workflows/test-action.yaml/badge.svg)](https://github.com/rancherlabs/cowboy/actions/workflows/test-action.yaml)
 
 Cowboy is a tool for processing Rancher CI log dump archives collected during cluster failures. It extracts, parses, and organizes diagnostic data from Rancher-managed Kubernetes clusters into a structured ZIP archive.
 
 **Available as:**
 - 🐹 **CLI tool** - Standalone binary for local use
-- 🐳 **Container image** - `docker.io/rancher/cowboy:latest`
+- 🐳 **Container image** - `ghcr.io/rancherlabs/cowboy:latest`
 - ⚡ **GitHub Action** - Seamless CI/CD integration
 
 ## Overview
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Process Rancher log dump
-        uses: rancher/cowboy@v1
+        uses: rancherlabs/cowboy@v1
         with:
           log-file-path: ./logs/failure-dump.txt
           output-file: diagnostic-bundle.zip
@@ -48,11 +48,11 @@ The processed ZIP file is automatically uploaded as a workflow artifact and can 
 
 ```bash
 # Process from stdin
-cat logdump.txt | docker run -i docker.io/rancher/cowboy:latest
+cat logdump.txt | docker run -i ghcr.io/rancherlabs/cowboy:latest
 
 # Process from file (with volume mount)
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  docker.io/rancher/cowboy:latest \
+  ghcr.io/rancherlabs/cowboy:latest \
   -output results.zip < logdump.txt
 ```
 
@@ -187,14 +187,14 @@ Cowboy uses the following key dependencies:
 
 #### Basic usage with default settings
 ```yaml
-- uses: rancher/cowboy@v1
+- uses: rancherlabs/cowboy@v1
   with:
     log-file-path: ./logdump.txt
 ```
 
 #### Custom output name without artifact upload
 ```yaml
-- uses: rancher/cowboy@v1
+- uses: rancherlabs/cowboy@v1
   with:
     log-file-path: ./logs/cluster-failure.txt
     output-file: cluster-diagnostics.zip
@@ -203,7 +203,7 @@ Cowboy uses the following key dependencies:
 
 #### Process and upload with custom retention
 ```yaml
-- uses: rancher/cowboy@v1
+- uses: rancherlabs/cowboy@v1
   with:
     log-file-path: ./dumps/production-failure.txt
     output-file: prod-diagnostics.zip
@@ -214,7 +214,7 @@ Cowboy uses the following key dependencies:
 ```yaml
 - name: Process log dump
   id: cowboy
-  uses: rancher/cowboy@v1
+  uses: rancherlabs/cowboy@v1
   with:
     log-file-path: ./logdump.txt
 
@@ -225,7 +225,7 @@ Cowboy uses the following key dependencies:
 
 ## Container Image Tags
 
-The container image is available at `docker.io/rancher/cowboy` with the following tags:
+The container image is available at `ghcr.io/rancherlabs/cowboy` with the following tags:
 
 - `latest` - Latest build from the main branch
 - `v1`, `v1.0`, `v1.0.0` - Semantic version tags
