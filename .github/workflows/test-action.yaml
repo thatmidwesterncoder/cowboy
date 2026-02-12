@@ -1,0 +1,70 @@
+---
+name: Test Cowboy Action
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test-action:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t docker.io/rancher/cowboy:latest .
+
+      - name: Extract test data
+        run: |
+          zcat testdata/test_request_body.txt.gz > testdata/test_logs.txt
+          cat testdata/test_logs.txt | head -n 10
+
+      - name: Test Cowboy action with default output
+        uses: ./
+        with:
+          log-file-path: testdata/test_logs.txt
+
+      - name: Verify output file exists
+        run: |
+          if [[ ! -d "test_logs_dump" ]]; then
+            echo "Error: Expected output dir not found"
+            ls -l
+            exit 1
+          fi
+          ls -lRh test_logs_dump/ 
+
+      - name: Download and verify artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cowboy-log-dump
+          path: downloaded-artifact
+
+      - name: Verify downloaded artifact
+        run: |
+          if [[ ! -d "downloaded-artifact/rancher_logs/" ]]; then
+            ls -l downloaded-artifact
+            echo "Error: Downloaded artifact not found"
+            exit 1
+          fi
+          echo "Artifact successfully downloaded"
+          ls -lRh downloaded-artifact/
+
+      - name: Test Cowboy action with custom output
+        uses: ./
+        with:
+          log-file-path: testdata/test_logs.txt
+          output-file: custom_output
+          upload-artifact: 'false'
+
+      - name: Verify custom output directory exists
+        run: |
+          if [[ ! -d "custom_output" ]]; then
+            echo "Error: Custom output directory not found"
+            ls -l
+            exit 1
+          fi
+          ls -lRh custom_output/

@@ -1,0 +1,29 @@
+# Git files
+.git
+.gitignore
+
+# Build artifacts
+cowboy
+*.zip
+*.txt
+
+# Test data
+testdata/
+
+# Documentation
+README.md
+read-vault-secrets/
+
+# CI/CD
+.github/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
